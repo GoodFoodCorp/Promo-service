@@ -1,0 +1,5 @@
+.env
+*.out
+promo-service
+vendor/
+.DS_Store
