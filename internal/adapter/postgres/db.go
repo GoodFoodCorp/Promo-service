@@ -32,7 +32,7 @@ func Migrate(databaseURL string) error {
 	if err != nil {
 		return err
 	}
-	url := strings.Replace(databaseURL, "postgres://", "pgx5://", 1)
+	url := migrationURL(databaseURL)
 	m, err := migrate.NewWithSourceInstance("iofs", src, url)
 	if err != nil {
 		return err
@@ -42,4 +42,9 @@ func Migrate(databaseURL string) error {
 		return err
 	}
 	return nil
+}
+
+func migrationURL(databaseURL string) string {
+	url := strings.Replace(databaseURL, "postgresql://", "pgx5://", 1)
+	return strings.Replace(url, "postgres://", "pgx5://", 1)
 }
