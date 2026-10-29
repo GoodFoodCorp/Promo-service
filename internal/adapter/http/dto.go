@@ -77,6 +77,7 @@ type previewResponse struct {
 type redeemRequest struct {
 	Code             string `json:"code"`
 	OrderID          string `json:"order_id"`
+	CustomerID       string `json:"customer_id"`
 	OrderAmountCents int64  `json:"order_amount_cents"`
 }
 

@@ -176,3 +176,28 @@ func (r *PromoRepository) Redeem(ctx context.Context, code, orderID, customerID 
 	}
 	return redemption, nil
 }
+
+func (r *PromoRepository) Release(ctx context.Context, orderID string, now time.Time) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx, `DELETE FROM promo_redemptions WHERE order_id = $1 RETURNING promo_code_id`, orderID)
+	if err != nil {
+		return err
+	}
+	codeIDs, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	for _, id := range codeIDs {
+		if _, err := tx.Exec(ctx,
+			`UPDATE promo_codes SET redemptions_used = GREATEST(redemptions_used - 1, 0), updated_at = $1 WHERE id = $2`,
+			now, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}

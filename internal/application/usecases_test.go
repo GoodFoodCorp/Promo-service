@@ -166,11 +166,11 @@ func TestRedeemPromoCodeIsIdempotent(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	first, err := uc.RedeemPromoCode(context.Background(), customer, "WELCOME10", "order-1", 2000)
+	first, err := uc.RedeemPromoCode(context.Background(), "WELCOME10", "order-1", customer.UserID, 2000)
 	require.NoError(t, err)
 	assert.Equal(t, int64(200), first.DiscountCents)
 
-	second, err := uc.RedeemPromoCode(context.Background(), customer, "WELCOME10", "order-1", 2000)
+	second, err := uc.RedeemPromoCode(context.Background(), "WELCOME10", "order-1", customer.UserID, 2000)
 	require.NoError(t, err)
 	assert.Equal(t, first.ID, second.ID, "a retry on the same order must not consume a second redemption")
 
@@ -187,11 +187,11 @@ func TestRedeemPromoCodeRespectsMaxRedemptions(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = uc.RedeemPromoCode(context.Background(), customer, "ONESHOT", "order-1", 1000)
+	_, err = uc.RedeemPromoCode(context.Background(), "ONESHOT", "order-1", customer.UserID, 1000)
 	require.NoError(t, err)
 
 	other := Actor{UserID: "cust-2", RoleSlugs: []string{"user"}}
-	_, err = uc.RedeemPromoCode(context.Background(), other, "ONESHOT", "order-2", 1000)
+	_, err = uc.RedeemPromoCode(context.Background(), "ONESHOT", "order-2", other.UserID, 1000)
 	var derr *domain.Error
 	require.ErrorAs(t, err, &derr)
 	assert.Equal(t, domain.ErrCodeConflict, derr.Code)
@@ -204,11 +204,53 @@ func TestDeletePromoCodeRefusedAfterRedemption(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = uc.RedeemPromoCode(context.Background(), customer, "WELCOME10", "order-1", 1000)
+	_, err = uc.RedeemPromoCode(context.Background(), "WELCOME10", "order-1", customer.UserID, 1000)
 	require.NoError(t, err)
 
 	err = uc.DeletePromoCode(context.Background(), admin, promo.ID)
 	var derr *domain.Error
 	require.ErrorAs(t, err, &derr)
 	assert.Equal(t, domain.ErrCodeConflict, derr.Code)
+}
+
+func (f *fakeRepo) Release(_ context.Context, orderID string, _ time.Time) error {
+	for key, r := range f.redemptions {
+		if r.OrderID != orderID {
+			continue
+		}
+		delete(f.redemptions, key)
+		for _, promo := range f.byCode {
+			if promo.ID == r.PromoCodeID && promo.RedemptionsUsed > 0 {
+				promo.RedemptionsUsed--
+			}
+		}
+	}
+	return nil
+}
+
+func TestRedeemPromoCodeRequiresOrderAndCustomer(t *testing.T) {
+	uc, _ := setup()
+	_, err := uc.RedeemPromoCode(context.Background(), "WELCOME10", "order-1", "", 1000)
+	var derr *domain.Error
+	require.ErrorAs(t, err, &derr)
+	assert.Equal(t, domain.ErrCodeValidation, derr.Code)
+}
+
+func TestReleaseRedemptionGivesTheUsageBack(t *testing.T) {
+	uc, repo := setup()
+	max := 1
+	_, err := uc.CreatePromoCode(context.Background(), admin, domain.PromoCodeInput{
+		Code: "ONESHOT", PercentOff: 20, MaxRedemptions: &max, IsActive: true,
+	})
+	require.NoError(t, err)
+	_, err = uc.RedeemPromoCode(context.Background(), "ONESHOT", "order-1", customer.UserID, 1000)
+	require.NoError(t, err)
+
+	require.NoError(t, uc.ReleaseRedemption(context.Background(), "order-1"))
+	require.NoError(t, uc.ReleaseRedemption(context.Background(), "order-1"), "idempotent")
+
+	promo, _ := repo.GetByCode(context.Background(), "ONESHOT")
+	assert.Equal(t, 0, promo.RedemptionsUsed)
+	_, err = uc.RedeemPromoCode(context.Background(), "ONESHOT", "order-2", "cust-2", 1000)
+	assert.NoError(t, err, "the freed usage can be consumed again")
 }

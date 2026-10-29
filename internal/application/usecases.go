@@ -114,15 +114,22 @@ func (uc *UseCases) PreviewPromoCode(ctx context.Context, actor Actor, code stri
 	return promo, promo.DiscountFor(orderAmountCents), nil
 }
 
-// RedeemPromoCode — called by order-service, forwarding the customer's own
-// JWT, at the moment an order is actually placed. Atomic and idempotent: a
-// retry for the same orderID never double-consumes the code.
-func (uc *UseCases) RedeemPromoCode(ctx context.Context, actor Actor, code, orderID string, orderAmountCents int64) (*domain.Redemption, error) {
-	if actor.UserID == "" {
-		return nil, domain.NewForbiddenError("authentication required")
+// RedeemPromoCode — called by order-service over the internal API once the
+// order is paid (customer-driven, or from the payment.succeeded event where no
+// customer token exists). Atomic and idempotent: a retry for the same orderID
+// never double-consumes the code.
+func (uc *UseCases) RedeemPromoCode(ctx context.Context, code, orderID, customerID string, orderAmountCents int64) (*domain.Redemption, error) {
+	if orderID == "" || customerID == "" {
+		return nil, domain.NewValidationError("orderId and customerId are required")
 	}
+	return uc.promos.Redeem(ctx, domain.NormalizeCode(code), orderID, customerID, orderAmountCents, time.Now().UTC())
+}
+
+// ReleaseRedemption gives back the usage consumed by an order that was
+// cancelled and refunded. Idempotent: an order without redemption is a no-op.
+func (uc *UseCases) ReleaseRedemption(ctx context.Context, orderID string) error {
 	if orderID == "" {
-		return nil, domain.NewValidationError("orderId is required")
+		return domain.NewValidationError("orderId is required")
 	}
-	return uc.promos.Redeem(ctx, domain.NormalizeCode(code), orderID, actor.UserID, orderAmountCents, time.Now().UTC())
+	return uc.promos.Release(ctx, orderID, time.Now().UTC())
 }

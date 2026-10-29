@@ -88,14 +88,14 @@ func (h *PromoHandler) Preview(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /api/promos/redeem
+// POST /internal/promos/redeem  (order-service, once the order is paid)
 func (h *PromoHandler) Redeem(w http.ResponseWriter, r *http.Request) {
 	var req redeemRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	redemption, err := h.uc.RedeemPromoCode(r.Context(), actorFrom(r), req.Code, req.OrderID, req.OrderAmountCents)
+	redemption, err := h.uc.RedeemPromoCode(r.Context(), req.Code, req.OrderID, req.CustomerID, req.OrderAmountCents)
 	if err != nil {
 		writeDomainError(w, r, err)
 		return
@@ -104,4 +104,13 @@ func (h *PromoHandler) Redeem(w http.ResponseWriter, r *http.Request) {
 		DiscountCents: redemption.DiscountCents,
 		Code:          req.Code,
 	})
+}
+
+// DELETE /internal/promos/redemptions/{orderId}  (order cancelled and refunded)
+func (h *PromoHandler) Release(w http.ResponseWriter, r *http.Request) {
+	if err := h.uc.ReleaseRedemption(r.Context(), chi.URLParam(r, "orderId")); err != nil {
+		writeDomainError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

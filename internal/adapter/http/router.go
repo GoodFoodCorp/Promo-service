@@ -12,7 +12,7 @@ import (
 
 type HealthChecker func(ctx context.Context) error
 
-func NewRouter(handler *PromoHandler, jwtSecret string, log zerolog.Logger, dbCheck HealthChecker) http.Handler {
+func NewRouter(handler *PromoHandler, jwtCfg JWTConfig, serviceKey string, log zerolog.Logger, dbCheck HealthChecker) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(chimw.Recoverer)
@@ -33,7 +33,7 @@ func NewRouter(handler *PromoHandler, jwtSecret string, log zerolog.Logger, dbCh
 	})
 
 	r.Route("/api/promos", func(r chi.Router) {
-		r.Use(Auth(jwtSecret))
+		r.Use(Auth(jwtCfg))
 
 		// Le siège seul gère les codes.
 		r.Group(func(r chi.Router) {
@@ -43,9 +43,17 @@ func NewRouter(handler *PromoHandler, jwtSecret string, log zerolog.Logger, dbCh
 			r.Delete("/{id}", handler.Delete)
 		})
 
-		// Tout utilisateur authentifié peut vérifier/consommer un code.
+		// Tout utilisateur authentifié peut prévisualiser un code. La
+		// consommation n'est plus publique : seule la confirmation d'une
+		// commande payée (order-service) consomme une utilisation.
 		r.Get("/preview", handler.Preview)
+	})
+
+	// Service-to-service routes, never exposed by the ingress (/api only).
+	r.Route("/internal/promos", func(r chi.Router) {
+		r.Use(ServiceKey(serviceKey))
 		r.Post("/redeem", handler.Redeem)
+		r.Delete("/redemptions/{orderId}", handler.Release)
 	})
 
 	return r
