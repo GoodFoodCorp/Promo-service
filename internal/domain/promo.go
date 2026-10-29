@@ -165,4 +165,8 @@ type PromoRepository interface {
 	// A retry for an orderID that already redeemed this code returns the
 	// original redemption unchanged instead of consuming it twice.
 	Redeem(ctx context.Context, code, orderID, customerID string, orderAmountCents int64, now time.Time) (*Redemption, error)
+
+	// Release deletes the redemptions of an order and gives their usages
+	// back, in one transaction.
+	Release(ctx context.Context, orderID string, now time.Time) error
 }

@@ -38,7 +38,7 @@ internal/
 - **Prévisualisation** (`GET /preview`) : vérifie l'éligibilité et calcule la remise
   **sans rien consommer** — appelable autant de fois que nécessaire pendant que le
   client compose son panier
-- **Consommation atomique** (`POST /redeem`) : verrou de ligne (`SELECT ... FOR
+- **Consommation atomique** (`POST /internal/promos/redeem`, réservée à order-service) : verrou de ligne (`SELECT ... FOR
   UPDATE`) + contrainte unique `(promo_code_id, order_id)` + `INSERT ... ON
   CONFLICT DO NOTHING` — un retry sur la même commande ne brûle jamais deux fois
   la même utilisation
@@ -64,7 +64,8 @@ client qui abandonne son panier ne brûle jamais une utilisation.
 | PUT | `/api/promos/{id}` | `admin` (siège) |
 | DELETE | `/api/promos/{id}` | `admin` (siège) |
 | GET | `/api/promos/preview?code=&amountCents=` | authentifié |
-| POST | `/api/promos/redeem` | authentifié (appelé par `order-service`) |
+| POST | `/internal/promos/redeem` | interne `X-Service-Key` (order-service, commande payée) — `{code, order_id, customer_id, order_amount_cents}` |
+| DELETE | `/internal/promos/redemptions/{orderId}` | interne `X-Service-Key` — rend l'utilisation d'une commande annulée et remboursée |
 | GET | `/healthz`, `/readyz` | public (sondes) |
 
 **Appel depuis `order-service`** : le JWT du client est transmis tel quel, pour
@@ -114,6 +115,8 @@ docker compose up -d --build
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | oui | Base dédiée `promo-db` |
 | `DATABASE_URL` | oui | Chaîne pgx (le compose la construit pour le conteneur) |
 | `JWT_SECRET` | oui | Secret HS256 partagé avec `auth-service` |
+| `JWT_ISSUER` / `JWT_AUDIENCE` | non | Défauts `goodfood-auth` / `goodfood-api` |
+| `SERVICE_API_KEY` | oui | Clé `X-Service-Key` des routes `/internal` |
 
 ---
 
