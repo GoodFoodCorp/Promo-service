@@ -62,3 +62,55 @@ func TestRedeemThenRelease(t *testing.T) {
 		t.Fatal("the freed usage can be redeemed again:", err)
 	}
 }
+
+func TestOncePerCustomerAndTheWelcomeCode(t *testing.T) {
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	if err := Migrate(url); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	repo := NewPromoRepository(pool)
+
+	welcome, err := repo.GetByCode(ctx, "BIENVENUE20")
+	if err != nil {
+		t.Fatal("the welcome code is created by the migrations:", err)
+	}
+	if welcome.PercentOff != 20 || !welcome.OncePerCustomer || !welcome.IsActive {
+		t.Fatalf("welcome code = %+v", welcome)
+	}
+
+	now := time.Now().UTC().Add(time.Minute)
+	code := "IT" + uuid.NewString()[:8]
+	promo, err := domain.NewPromoCode(domain.PromoCodeInput{Code: code, PercentOff: 10, IsActive: true, OncePerCustomer: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Create(ctx, promo); err != nil {
+		t.Fatal(err)
+	}
+	customer := "cust-" + uuid.NewString()[:8]
+	if _, err := repo.Redeem(ctx, promo.Code, uuid.NewString(), customer, 2000, now); err != nil {
+		t.Fatal(err)
+	}
+	if used, err := repo.HasRedeemed(ctx, promo.ID, customer); err != nil || !used {
+		t.Fatalf("HasRedeemed = %v, %v", used, err)
+	}
+	if _, err := repo.Redeem(ctx, promo.Code, uuid.NewString(), customer, 2000, now); err == nil {
+		t.Fatal("a second order of the same customer must not redeem it")
+	}
+	if _, err := repo.Redeem(ctx, promo.Code, uuid.NewString(), "other-"+customer, 2000, now); err != nil {
+		t.Fatal("another customer can:", err)
+	}
+	stored, _ := repo.GetByCode(ctx, promo.Code)
+	if !stored.OncePerCustomer || stored.RedemptionsUsed != 2 {
+		t.Fatalf("stored = %+v", stored)
+	}
+}

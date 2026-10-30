@@ -21,8 +21,10 @@ type PromoCode struct {
 	StartsAt            time.Time
 	ExpiresAt           *time.Time // nil = jamais
 	IsActive            bool
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	// OncePerCustomer: each customer may use the code once (welcome offer).
+	OncePerCustomer bool
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type PromoCodeInput struct {
@@ -33,6 +35,7 @@ type PromoCodeInput struct {
 	StartsAt            *time.Time
 	ExpiresAt           *time.Time
 	IsActive            bool
+	OncePerCustomer     bool
 }
 
 // NormalizeCode is the single source of truth for how a code is compared:
@@ -86,6 +89,7 @@ func NewPromoCode(in PromoCodeInput) (*PromoCode, error) {
 		StartsAt:            startsAt,
 		ExpiresAt:           in.ExpiresAt,
 		IsActive:            true,
+		OncePerCustomer:     in.OncePerCustomer,
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}, nil
@@ -107,6 +111,7 @@ func (p *PromoCode) ApplyUpdate(in PromoCodeInput) error {
 	p.StartsAt = startsAt
 	p.ExpiresAt = in.ExpiresAt
 	p.IsActive = in.IsActive
+	p.OncePerCustomer = in.OncePerCustomer
 	p.UpdatedAt = time.Now().UTC()
 	return nil
 }
@@ -130,6 +135,11 @@ func (p *PromoCode) CheckEligible(now time.Time, orderAmountCents int64) error {
 		return NewConflictError("le montant de la commande est inférieur au minimum requis pour ce code")
 	}
 	return nil
+}
+
+// ErrAlreadyUsedByCustomer: a once-per-customer code this customer already used.
+func ErrAlreadyUsedByCustomer() error {
+	return NewConflictError("vous avez déjà utilisé ce code promo")
 }
 
 // DiscountFor computes the discount in cents, rounded down.
@@ -165,6 +175,10 @@ type PromoRepository interface {
 	// A retry for an orderID that already redeemed this code returns the
 	// original redemption unchanged instead of consuming it twice.
 	Redeem(ctx context.Context, code, orderID, customerID string, orderAmountCents int64, now time.Time) (*Redemption, error)
+
+	// HasRedeemed reports whether the customer already used this code (an
+	// order of theirs still holds a redemption of it).
+	HasRedeemed(ctx context.Context, promoID, customerID string) (bool, error)
 
 	// Release deletes the redemptions of an order and gives their usages
 	// back, in one transaction.

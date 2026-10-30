@@ -17,6 +17,7 @@ type promoCodeRequest struct {
 	StartsAt            *time.Time `json:"starts_at"`
 	ExpiresAt           *time.Time `json:"expires_at"`
 	IsActive            bool       `json:"is_active"`
+	OncePerCustomer     bool       `json:"once_per_customer"`
 }
 
 func (r promoCodeRequest) toInput() domain.PromoCodeInput {
@@ -28,6 +29,7 @@ func (r promoCodeRequest) toInput() domain.PromoCodeInput {
 		StartsAt:            r.StartsAt,
 		ExpiresAt:           r.ExpiresAt,
 		IsActive:            r.IsActive,
+		OncePerCustomer:     r.OncePerCustomer,
 	}
 }
 
@@ -41,6 +43,7 @@ type promoCodeResponse struct {
 	StartsAt            time.Time  `json:"starts_at"`
 	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
 	IsActive            bool       `json:"is_active"`
+	OncePerCustomer     bool       `json:"once_per_customer"`
 	CreatedAt           time.Time  `json:"created_at"`
 }
 
@@ -55,6 +58,7 @@ func toResponse(p *domain.PromoCode) promoCodeResponse {
 		StartsAt:            p.StartsAt,
 		ExpiresAt:           p.ExpiresAt,
 		IsActive:            p.IsActive,
+		OncePerCustomer:     p.OncePerCustomer,
 		CreatedAt:           p.CreatedAt,
 	}
 }
