@@ -111,6 +111,15 @@ func (uc *UseCases) PreviewPromoCode(ctx context.Context, actor Actor, code stri
 	if err := promo.CheckEligible(time.Now().UTC(), orderAmountCents); err != nil {
 		return nil, 0, err
 	}
+	if promo.OncePerCustomer {
+		used, err := uc.promos.HasRedeemed(ctx, promo.ID, actor.UserID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if used {
+			return nil, 0, domain.ErrAlreadyUsedByCustomer()
+		}
+	}
 	return promo, promo.DiscountFor(orderAmountCents), nil
 }
 

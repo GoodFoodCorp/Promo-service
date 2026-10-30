@@ -88,6 +88,9 @@ func (f *fakeRepo) Redeem(_ context.Context, code, orderID, customerID string, o
 	if err := promo.CheckEligible(now, orderAmountCents); err != nil {
 		return nil, err
 	}
+	if used, _ := f.HasRedeemed(context.Background(), promo.ID, customerID); promo.OncePerCustomer && used {
+		return nil, domain.ErrAlreadyUsedByCustomer()
+	}
 	redemption := &domain.Redemption{
 		ID:            uuid.NewString(),
 		PromoCodeID:   promo.ID,
@@ -213,6 +216,15 @@ func TestDeletePromoCodeRefusedAfterRedemption(t *testing.T) {
 	assert.Equal(t, domain.ErrCodeConflict, derr.Code)
 }
 
+func (f *fakeRepo) HasRedeemed(_ context.Context, promoID, customerID string) (bool, error) {
+	for _, r := range f.redemptions {
+		if r.PromoCodeID == promoID && r.CustomerID == customerID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (f *fakeRepo) Release(_ context.Context, orderID string, _ time.Time) error {
 	for key, r := range f.redemptions {
 		if r.OrderID != orderID {
@@ -253,4 +265,32 @@ func TestReleaseRedemptionGivesTheUsageBack(t *testing.T) {
 	assert.Equal(t, 0, promo.RedemptionsUsed)
 	_, err = uc.RedeemPromoCode(context.Background(), "ONESHOT", "order-2", "cust-2", 1000)
 	assert.NoError(t, err, "the freed usage can be consumed again")
+}
+
+func TestWelcomeCodeIsUsedOncePerCustomer(t *testing.T) {
+	uc, _ := setup()
+	_, err := uc.CreatePromoCode(context.Background(), admin, domain.PromoCodeInput{
+		Code: "BIENVENUE20", PercentOff: 20, IsActive: true, OncePerCustomer: true,
+	})
+	require.NoError(t, err)
+
+	_, discount, err := uc.PreviewPromoCode(context.Background(), customer, "bienvenue20", 2000)
+	require.NoError(t, err)
+	assert.Equal(t, int64(400), discount)
+	_, err = uc.RedeemPromoCode(context.Background(), "BIENVENUE20", "order-1", customer.UserID, 2000)
+	require.NoError(t, err)
+
+	_, _, err = uc.PreviewPromoCode(context.Background(), customer, "BIENVENUE20", 2000)
+	var derr *domain.Error
+	require.ErrorAs(t, err, &derr)
+	assert.Equal(t, domain.ErrCodeConflict, derr.Code)
+	_, err = uc.RedeemPromoCode(context.Background(), "BIENVENUE20", "order-2", customer.UserID, 2000)
+	require.ErrorAs(t, err, &derr, "not on a second order either")
+
+	_, _, err = uc.PreviewPromoCode(context.Background(), Actor{UserID: "cust-2"}, "BIENVENUE20", 2000)
+	assert.NoError(t, err, "another customer still can")
+
+	require.NoError(t, uc.ReleaseRedemption(context.Background(), "order-1"))
+	_, _, err = uc.PreviewPromoCode(context.Background(), customer, "BIENVENUE20", 2000)
+	assert.NoError(t, err, "a cancelled order gives the welcome offer back")
 }

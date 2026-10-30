@@ -20,12 +20,12 @@ func NewPromoRepository(pool *pgxpool.Pool) *PromoRepository {
 	return &PromoRepository{pool: pool}
 }
 
-const promoCols = `id, code, percent_off, min_order_amount_cents, max_redemptions, redemptions_used, starts_at, expires_at, is_active, created_at, updated_at`
+const promoCols = `id, code, percent_off, min_order_amount_cents, max_redemptions, redemptions_used, starts_at, expires_at, is_active, created_at, updated_at, once_per_customer`
 
 func scanPromo(row pgx.Row) (*domain.PromoCode, error) {
 	var p domain.PromoCode
 	err := row.Scan(&p.ID, &p.Code, &p.PercentOff, &p.MinOrderAmountCents, &p.MaxRedemptions,
-		&p.RedemptionsUsed, &p.StartsAt, &p.ExpiresAt, &p.IsActive, &p.CreatedAt, &p.UpdatedAt)
+		&p.RedemptionsUsed, &p.StartsAt, &p.ExpiresAt, &p.IsActive, &p.CreatedAt, &p.UpdatedAt, &p.OncePerCustomer)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.NewNotFoundError("promo code not found")
 	}
@@ -37,9 +37,9 @@ func scanPromo(row pgx.Row) (*domain.PromoCode, error) {
 
 func (r *PromoRepository) Create(ctx context.Context, p *domain.PromoCode) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO promo_codes (`+promoCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		`INSERT INTO promo_codes (`+promoCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 		p.ID, p.Code, p.PercentOff, p.MinOrderAmountCents, p.MaxRedemptions,
-		p.RedemptionsUsed, p.StartsAt, p.ExpiresAt, p.IsActive, p.CreatedAt, p.UpdatedAt)
+		p.RedemptionsUsed, p.StartsAt, p.ExpiresAt, p.IsActive, p.CreatedAt, p.UpdatedAt, p.OncePerCustomer)
 	return err
 }
 
@@ -74,8 +74,8 @@ func (r *PromoRepository) List(ctx context.Context) ([]domain.PromoCode, error) 
 func (r *PromoRepository) Update(ctx context.Context, p *domain.PromoCode) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE promo_codes SET percent_off = $1, min_order_amount_cents = $2, max_redemptions = $3,
-		 starts_at = $4, expires_at = $5, is_active = $6, updated_at = $7 WHERE id = $8`,
-		p.PercentOff, p.MinOrderAmountCents, p.MaxRedemptions, p.StartsAt, p.ExpiresAt, p.IsActive, p.UpdatedAt, p.ID)
+		 starts_at = $4, expires_at = $5, is_active = $6, updated_at = $7, once_per_customer = $9 WHERE id = $8`,
+		p.PercentOff, p.MinOrderAmountCents, p.MaxRedemptions, p.StartsAt, p.ExpiresAt, p.IsActive, p.UpdatedAt, p.ID, p.OncePerCustomer)
 	if err != nil {
 		return err
 	}
@@ -132,6 +132,17 @@ func (r *PromoRepository) Redeem(ctx context.Context, code, orderID, customerID 
 	if err := promo.CheckEligible(now, orderAmountCents); err != nil {
 		return nil, err
 	}
+	// The code's row is locked FOR UPDATE: two orders of one customer cannot
+	// both get past this check.
+	if promo.OncePerCustomer {
+		used, err := hasRedeemed(ctx, tx, promo.ID, customerID)
+		if err != nil {
+			return nil, err
+		}
+		if used {
+			return nil, domain.ErrAlreadyUsedByCustomer()
+		}
+	}
 	discount := promo.DiscountFor(orderAmountCents)
 
 	redemption := &domain.Redemption{
@@ -175,6 +186,22 @@ func (r *PromoRepository) Redeem(ctx context.Context, code, orderID, customerID 
 		return nil, err
 	}
 	return redemption, nil
+}
+
+func (r *PromoRepository) HasRedeemed(ctx context.Context, promoID, customerID string) (bool, error) {
+	return hasRedeemed(ctx, r.pool, promoID, customerID)
+}
+
+type querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func hasRedeemed(ctx context.Context, q querier, promoID, customerID string) (bool, error) {
+	var used bool
+	err := q.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM promo_redemptions WHERE promo_code_id = $1 AND customer_id = $2)`,
+		promoID, customerID).Scan(&used)
+	return used, err
 }
 
 func (r *PromoRepository) Release(ctx context.Context, orderID string, now time.Time) error {
