@@ -32,6 +32,9 @@ func NewRouter(handler *PromoHandler, jwtCfg JWTConfig, serviceKey string, log z
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
 
+	// Public: the storefront shows the welcome offer only to whoever may use it.
+	r.With(OptionalAuth(jwtCfg)).Get("/api/promos/welcome", handler.Welcome)
+
 	r.Route("/api/promos", func(r chi.Router) {
 		r.Use(Auth(jwtCfg))
 

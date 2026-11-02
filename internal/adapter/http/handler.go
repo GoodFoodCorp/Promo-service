@@ -88,6 +88,24 @@ func (h *PromoHandler) Preview(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GET /api/promos/welcome  (public; signed-in: tells whether the customer may
+// still use the welcome code)
+func (h *PromoHandler) Welcome(w http.ResponseWriter, r *http.Request) {
+	offer, err := h.uc.GetWelcomeOffer(r.Context(), actorFrom(r))
+	if err != nil {
+		writeDomainError(w, r, err)
+		return
+	}
+	// The answer depends on who asks: never stored by a shared cache.
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, welcomeResponse{
+		Code:       offer.Code,
+		PercentOff: offer.PercentOff,
+		Available:  offer.Available,
+		Eligible:   offer.Eligible,
+	})
+}
+
 // POST /internal/promos/redeem  (order-service, once the order is paid)
 func (h *PromoHandler) Redeem(w http.ResponseWriter, r *http.Request) {
 	var req redeemRequest

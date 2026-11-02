@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"goodfood/promo-service/internal/domain"
@@ -23,6 +24,23 @@ func (a Actor) HasRole(slug string) bool {
 }
 
 const RoleAdmin = "admin"
+
+// RoleCustomer is the role of the accounts that place orders.
+const RoleCustomer = "user"
+
+// WelcomeCode is the welcome offer the storefront advertises.
+const WelcomeCode = "BIENVENUE20"
+
+// WelcomeOffer is what the storefront needs to show the welcome offer.
+type WelcomeOffer struct {
+	Code       string
+	PercentOff int
+	// Available: the code exists, is active, within its dates and not used up.
+	Available bool
+	// Eligible: the signed-in actor may still use it (a customer who never
+	// did); always false for a visitor, who is eligible once signed up.
+	Eligible bool
+}
 
 type UseCases struct {
 	promos domain.PromoRepository
@@ -121,6 +139,34 @@ func (uc *UseCases) PreviewPromoCode(ctx context.Context, actor Actor, code stri
 		}
 	}
 	return promo, promo.DiscountFor(orderAmountCents), nil
+}
+
+// GetWelcomeOffer tells whether the welcome offer runs and whether the actor
+// (empty for a visitor) may still use it: shown only to those who can.
+func (uc *UseCases) GetWelcomeOffer(ctx context.Context, actor Actor) (WelcomeOffer, error) {
+	offer := WelcomeOffer{Code: WelcomeCode}
+	promo, err := uc.promos.GetByCode(ctx, WelcomeCode)
+	if err != nil {
+		var derr *domain.Error
+		if errors.As(err, &derr) && derr.Code == domain.ErrCodeNotFound {
+			return offer, nil
+		}
+		return offer, err
+	}
+	offer.PercentOff = promo.PercentOff
+	offer.Available = promo.CheckEligible(time.Now().UTC(), promo.MinOrderAmountCents) == nil
+	if !offer.Available || actor.UserID == "" || !actor.HasRole(RoleCustomer) {
+		return offer, nil
+	}
+	offer.Eligible = true
+	if promo.OncePerCustomer {
+		used, err := uc.promos.HasRedeemed(ctx, promo.ID, actor.UserID)
+		if err != nil {
+			return offer, err
+		}
+		offer.Eligible = !used
+	}
+	return offer, nil
 }
 
 // RedeemPromoCode — called by order-service over the internal API once the

@@ -71,6 +71,13 @@ func toResponseList(promos []domain.PromoCode) []promoCodeResponse {
 	return out
 }
 
+type welcomeResponse struct {
+	Code       string `json:"code"`
+	PercentOff int    `json:"percent_off"`
+	Available  bool   `json:"available"`
+	Eligible   bool   `json:"eligible"`
+}
+
 type previewResponse struct {
 	Valid         bool   `json:"valid"`
 	Code          string `json:"code"`
