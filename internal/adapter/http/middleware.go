@@ -55,6 +55,44 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+// OptionalAuth stores the Actor when a valid access token comes with the
+// request, and lets a visitor (no or invalid token) through as an empty Actor.
+func OptionalAuth(cfg JWTConfig) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			tokenString := ""
+			if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+				tokenString = strings.TrimPrefix(h, "Bearer ")
+			} else if c, err := r.Cookie("auth_token"); err == nil {
+				tokenString = c.Value
+			}
+			if tokenString != "" {
+				if claims, err := parseAccessToken(tokenString, cfg); err == nil {
+					if actor := actorFromClaims(claims); actor.UserID != "" {
+						r = r.WithContext(context.WithValue(r.Context(), ctxKeyActor, actor))
+					}
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func actorFromClaims(claims map[string]interface{}) application.Actor {
+	actor := application.Actor{}
+	if sub, ok := claims["sub"].(string); ok {
+		actor.UserID = sub
+	}
+	if slugs, ok := claims["role_slugs"].([]interface{}); ok {
+		for _, s := range slugs {
+			if str, ok := s.(string); ok {
+				actor.RoleSlugs = append(actor.RoleSlugs, strings.ToLower(str))
+			}
+		}
+	}
+	return actor
+}
+
 // Auth validates the access token issued by auth-service and stores the Actor.
 func Auth(cfg JWTConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -74,17 +112,7 @@ func Auth(cfg JWTConfig) func(http.Handler) http.Handler {
 				writeError(w, r, http.StatusUnauthorized, "invalid or expired token")
 				return
 			}
-			actor := application.Actor{}
-			if sub, ok := claims["sub"].(string); ok {
-				actor.UserID = sub
-			}
-			if slugs, ok := claims["role_slugs"].([]interface{}); ok {
-				for _, s := range slugs {
-					if str, ok := s.(string); ok {
-						actor.RoleSlugs = append(actor.RoleSlugs, strings.ToLower(str))
-					}
-				}
-			}
+			actor := actorFromClaims(claims)
 			if actor.UserID == "" {
 				writeError(w, r, http.StatusUnauthorized, "token has no subject")
 				return
